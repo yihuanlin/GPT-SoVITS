@@ -192,7 +192,7 @@ def get_hparams(init=True, stage=1):
         "-c",
         "--config",
         type=str,
-        default="./configs/s2.json",
+        default="./configs/s2v2ProPlus.json",
         help="JSON file for configuration",
     )
     parser.add_argument("-p", "--pretrain", type=str, required=False, default=None, help="pretrain dir")

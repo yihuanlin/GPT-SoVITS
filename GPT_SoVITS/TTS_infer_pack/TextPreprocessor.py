@@ -198,7 +198,14 @@ class TextPreprocessor:
         for i in range(len(word2ph)):
             repeat_feature = res[i].repeat(word2ph[i], 1)
             phone_level_feature.append(repeat_feature)
-        phone_level_feature = torch.cat(phone_level_feature, dim=0)
+        if len(phone_level_feature) > 0:
+            phone_level_feature = torch.cat(phone_level_feature, dim=0)
+        else:
+            # Handle empty case - create a dummy tensor or use a default
+            print(f"Warning: Empty phone features for text: {norm_text}")
+            # Create a default/dummy tensor of appropriate shape
+            phone_level_feature = torch.zeros((1, feature_dim), device=self.device)  # Use appropriate dimensions
+
         return phone_level_feature.T
 
     def clean_text_inf(self, text: str, language: str, version: str = "v2"):

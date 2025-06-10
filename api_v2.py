@@ -1,107 +1,8 @@
-"""
-# WebAPI文档
-
-` python api_v2.py -a 127.0.0.1 -p 9880 -c GPT_SoVITS/configs/tts_infer.yaml `
-
-## 执行参数:
-    `-a` - `绑定地址, 默认"127.0.0.1"`
-    `-p` - `绑定端口, 默认9880`
-    `-c` - `TTS配置文件路径, 默认"GPT_SoVITS/configs/tts_infer.yaml"`
-
-## 调用:
-
-### 推理
-
-endpoint: `/tts`
-GET:
-```
-http://127.0.0.1:9880/tts?text=先帝创业未半而中道崩殂，今天下三分，益州疲弊，此诚危急存亡之秋也。&text_lang=zh&ref_audio_path=archive_jingyuan_1.wav&prompt_lang=zh&prompt_text=我是「罗浮」云骑将军景元。不必拘谨，「将军」只是一时的身份，你称呼我景元便可&text_split_method=cut5&batch_size=1&media_type=wav&streaming_mode=true
-```
-
-POST:
-```json
-{
-    "text": "",                   # str.(required) text to be synthesized
-    "text_lang: "",               # str.(required) language of the text to be synthesized
-    "ref_audio_path": "",         # str.(required) reference audio path
-    "aux_ref_audio_paths": [],    # list.(optional) auxiliary reference audio paths for multi-speaker tone fusion
-    "prompt_text": "",            # str.(optional) prompt text for the reference audio
-    "prompt_lang": "",            # str.(required) language of the prompt text for the reference audio
-    "top_k": 5,                   # int. top k sampling
-    "top_p": 1,                   # float. top p sampling
-    "temperature": 1,             # float. temperature for sampling
-    "text_split_method": "cut0",  # str. text split method, see text_segmentation_method.py for details.
-    "batch_size": 1,              # int. batch size for inference
-    "batch_threshold": 0.75,      # float. threshold for batch splitting.
-    "split_bucket: True,          # bool. whether to split the batch into multiple buckets.
-    "speed_factor":1.0,           # float. control the speed of the synthesized audio.
-    "streaming_mode": False,      # bool. whether to return a streaming response.
-    "seed": -1,                   # int. random seed for reproducibility.
-    "parallel_infer": True,       # bool. whether to use parallel inference.
-    "repetition_penalty": 1.35    # float. repetition penalty for T2S model.
-    "sample_steps": 32,           # int. number of sampling steps for VITS model V3.
-    "super_sampling": False,       # bool. whether to use super-sampling for audio when using VITS model V3.
-}
-```
-
-RESP:
-成功: 直接返回 wav 音频流， http code 200
-失败: 返回包含错误信息的 json, http code 400
-
-### 命令控制
-
-endpoint: `/control`
-
-command:
-"restart": 重新运行
-"exit": 结束运行
-
-GET:
-```
-http://127.0.0.1:9880/control?command=restart
-```
-POST:
-```json
-{
-    "command": "restart"
-}
-```
-
-RESP: 无
-
-
-### 切换GPT模型
-
-endpoint: `/set_gpt_weights`
-
-GET:
-```
-http://127.0.0.1:9880/set_gpt_weights?weights_path=GPT_SoVITS/pretrained_models/s1bert25hz-2kh-longer-epoch=68e-step=50232.ckpt
-```
-RESP:
-成功: 返回"success", http code 200
-失败: 返回包含错误信息的 json, http code 400
-
-
-### 切换Sovits模型
-
-endpoint: `/set_sovits_weights`
-
-GET:
-```
-http://127.0.0.1:9880/set_sovits_weights?weights_path=GPT_SoVITS/pretrained_models/s2G488k.pth
-```
-
-RESP:
-成功: 返回"success", http code 200
-失败: 返回包含错误信息的 json, http code 400
-
-"""
-
 import os
 import sys
 import traceback
 from typing import Generator
+import re
 
 now_dir = os.getcwd()
 sys.path.append(now_dir)
@@ -121,6 +22,7 @@ from tools.i18n.i18n import I18nAuto
 from GPT_SoVITS.TTS_infer_pack.TTS import TTS, TTS_Config
 from GPT_SoVITS.TTS_infer_pack.text_segmentation_method import get_method_names as get_cut_method_names
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 
 # print(sys.path)
 i18n = I18nAuto()
@@ -145,7 +47,87 @@ print(tts_config)
 tts_pipeline = TTS(tts_config)
 
 APP = FastAPI()
+APP.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
+# Default reference audio paths for each language
+DEFAULT_REF_AUDIO_PATHS = {
+    "en": "ref/Yanqing_EN.wav",
+    "zh": "ref/Yanqing.wav",
+    "ja": "ref/Yanqing_JP.wav"
+}
+
+# Default prompt texts for each language
+DEFAULT_PROMPT_TEXTS = {
+    "en": "There are no more fitting opponents for me on the Luofu, but out there among the stars... there may be someone yet.",
+    "zh": "罗浮上已没有我的对手，但放眼星际之间…可不尽然。",
+    "ja": "もう「羅浮」に僕の相手が務まる人はいないけど、対象が宇宙となると…話は変わってくるだろうね。"
+}
+
+# Reference audio paths for emotional tones by language (for cut0 method)
+EMOTION_REF_AUDIO_PATHS = {
+    "question": {
+        "en": "ref/Yanqing_EN_question.wav",
+        "zh": "ref/Yanqing_question.wav",
+        "ja": "ref/Yanqing_JP_question.wav"
+    },
+    "exclamation": {
+        "en": "ref/Yanqing_EN_exclamation.wav",
+        "zh": "ref/Yanqing_exclamation.wav",
+        "ja": "ref/Yanqing_JP_exclamation.wav"
+    }
+}
+
+# Prompt texts for emotional tones (for cut0 method)
+EMOTION_PROMPT_TEXTS = {
+    "question": {
+        "en": "Why are you filming me? Shouldn't you be filming them?",
+        "zh": "老师，你们的列车长帕姆老师，到底是什么来头啊？",
+        "ja": "ねえ先生、先生たちの列車にいる車掌のパム先生って、いったい何者なの？"
+    },
+    "exclamation": {
+        "en": "A 120-foot sword! Just thinking about it makes me excited!",
+        "zh": "一百二十尺的巨剑，光是想想都觉得激动！",
+        "ja": "50mの剣、想像するだけでワクワクする！"
+    }
+}
+
+# Function to detect language from text with improved logic
+def detect_language(text):
+    has_chinese = bool(re.search(r'[\u4e00-\u9fff]', text))
+    has_japanese = bool(re.search(r'[\u3040-\u30ff\u3400-\u4dbf]', text))
+    has_english = bool(re.search(r'[a-zA-Z]', text))
+    
+    if has_chinese:
+        if has_english:
+            return "zh"
+        else:
+            return "all_zh"
+    elif has_japanese:
+        if has_english:
+            return "ja"
+        else:
+            return "all_ja"
+    else:
+        return "en"
+
+# Function to detect emotion from the last character of a sentence
+def detect_emotion(text):
+    # Define patterns for different ending punctuation marks
+    question_marks = ['?', '？', '¿']
+    exclamation_marks = ['!', '！', '¡']
+    
+    # Check if text ends with any of these punctuation marks
+    if any(text.rstrip().endswith(mark) for mark in question_marks):
+        return "question"
+    elif any(text.rstrip().endswith(mark) for mark in exclamation_marks):
+        return "exclamation"
+    return None
 
 class TTS_Request(BaseModel):
     text: str = None
@@ -155,20 +137,20 @@ class TTS_Request(BaseModel):
     prompt_lang: str = None
     prompt_text: str = ""
     top_k: int = 5
-    top_p: float = 1
-    temperature: float = 1
-    text_split_method: str = "cut5"
-    batch_size: int = 1
+    top_p: float = 0.9
+    temperature: float = 0.8
+    text_split_method: str = "cut6"
+    batch_size: int = 2
     batch_threshold: float = 0.75
     split_bucket: bool = True
     speed_factor: float = 1.0
-    fragment_interval: float = 0.3
+    fragment_interval: float = 0.2
     seed: int = -1
-    media_type: str = "wav"
+    media_type: str = "aac"
     streaming_mode: bool = False
     parallel_infer: bool = True
     repetition_penalty: float = 1.35
-    sample_steps: int = 32
+    sample_steps: int = 12
     super_sampling: bool = False
 
 
@@ -262,9 +244,9 @@ def check_params(req: dict):
     text_lang: str = req.get("text_lang", "")
     ref_audio_path: str = req.get("ref_audio_path", "")
     streaming_mode: bool = req.get("streaming_mode", False)
-    media_type: str = req.get("media_type", "wav")
+    media_type: str = req.get("media_type", "aac")
     prompt_lang: str = req.get("prompt_lang", "")
-    text_split_method: str = req.get("text_split_method", "cut5")
+    text_split_method: str = req.get("text_split_method", "cut6")
 
     if ref_audio_path in [None, ""]:
         return JSONResponse(status_code=400, content={"message": "ref_audio_path is required"})
@@ -313,23 +295,61 @@ async def tts_handle(req: dict):
                 "top_k": 5,                   # int. top k sampling
                 "top_p": 1,                   # float. top p sampling
                 "temperature": 1,             # float. temperature for sampling
-                "text_split_method": "cut5",  # str. text split method, see text_segmentation_method.py for details.
+                "text_split_method": "cut6",  # str. text split method, see text_segmentation_method.py for details.
                 "batch_size": 1,              # int. batch size for inference
                 "batch_threshold": 0.75,      # float. threshold for batch splitting.
                 "split_bucket: True,          # bool. whether to split the batch into multiple buckets.
                 "speed_factor":1.0,           # float. control the speed of the synthesized audio.
                 "fragment_interval":0.3,      # float. to control the interval of the audio fragment.
                 "seed": -1,                   # int. random seed for reproducibility.
-                "media_type": "wav",          # str. media type of the output audio, support "wav", "raw", "ogg", "aac".
+                "media_type": "acc",          # str. media type of the output audio, support "wav", "raw", "ogg", "aac".
                 "streaming_mode": False,      # bool. whether to return a streaming response.
                 "parallel_infer": True,       # bool.(optional) whether to use parallel inference.
                 "repetition_penalty": 1.35    # float.(optional) repetition penalty for T2S model.
-                "sample_steps": 32,           # int. number of sampling steps for VITS model V3.
+                "sample_steps": 12,           # int. number of sampling steps for VITS model V3.
                 "super_sampling": False,       # bool. whether to use super-sampling for audio when using VITS model V3.
             }
     returns:
         StreamingResponse: audio stream response.
     """
+    # Detect language and set defaults if needed
+    text = req.get("text", "")
+    text_lang_provided = "text_lang" in req and req["text_lang"]
+    prompt_lang_provided = "prompt_lang" in req and req["prompt_lang"]
+    ref_audio_provided = "ref_audio_path" in req and req["ref_audio_path"]
+    prompt_text_provided = "prompt_text" in req and req["prompt_text"]
+    text_split_method = req.get("text_split_method", "cut6")
+    
+    if text:
+        text = re.sub(r'([\u4e00-\u9fff])\1{2,}', r'\1\1', text)
+        detected_lang = detect_language(text)
+        
+        # If text_lang not specified, set based on detected language
+        if not text_lang_provided:
+            req["text_lang"] = detected_lang
+            
+        # Get base language (remove 'all_' prefix if present)
+        base_lang = detected_lang.replace("all_", "")
+        
+        # If prompt_lang not specified, set based on base language
+        if not prompt_lang_provided:
+            req["prompt_lang"] = base_lang
+            
+        # Check for emotional content if text_split_method is cut0
+        emotion = None
+        if text_split_method == "cut0":
+            emotion = detect_emotion(text)
+            
+        # Set ref_audio_path and prompt_text based on emotion and language
+        if emotion and not ref_audio_provided:
+            req["ref_audio_path"] = EMOTION_REF_AUDIO_PATHS.get(emotion, {}).get(base_lang, DEFAULT_REF_AUDIO_PATHS.get(base_lang, "ref/Yanqing.wav"))
+        elif not ref_audio_provided:
+            req["ref_audio_path"] = DEFAULT_REF_AUDIO_PATHS.get(base_lang, "ref/Yanqing.wav")
+            
+        if emotion and not prompt_text_provided:
+            req["prompt_text"] = EMOTION_PROMPT_TEXTS.get(emotion, {}).get(base_lang, DEFAULT_PROMPT_TEXTS.get(base_lang, DEFAULT_PROMPT_TEXTS["en"]))
+        elif not prompt_text_provided:
+            req["prompt_text"] = DEFAULT_PROMPT_TEXTS.get(base_lang, DEFAULT_PROMPT_TEXTS["en"])
 
     streaming_mode = req.get("streaming_mode", False)
     return_fragment = req.get("return_fragment", False)
@@ -348,15 +368,32 @@ async def tts_handle(req: dict):
         if streaming_mode:
 
             def streaming_generator(tts_generator: Generator, media_type: str):
-                if_frist_chunk = True
-                for sr, chunk in tts_generator:
-                    if if_frist_chunk and media_type == "wav":
-                        yield wave_header_chunk(sample_rate=sr)
-                        media_type = "raw"
-                        if_frist_chunk = False
-                    yield pack_audio(BytesIO(), chunk, sr, media_type).getvalue()
+                if_first_chunk = True
+                current_segment = 1
+                
+                try:
+                    for sr, chunk in tts_generator:
+                        try:
+                            if if_first_chunk and media_type == "wav":
+                                yield wave_header_chunk(sample_rate=sr)
+                                media_type = "raw"
+                                if_first_chunk = False
+                            
+                            # Log successful segment processing
+                            print(f"Successfully processed segment {current_segment} with {len(chunk)} bytes")
+                            current_segment += 1
+                            
+                            yield pack_audio(BytesIO(), chunk, sr, media_type).getvalue()
+                        except Exception as chunk_error:
+                            # Log error but continue with next segment
+                            print(f"Error processing chunk {current_segment}: {str(chunk_error)}")
+                            # Continue to next iteration without yielding a broken chunk
+                except Exception as generator_error:
+                    # Log the outer generator error
+                    print(f"TTS generator failed: {str(generator_error)}")
+                    # No need to re-raise; this will end the stream but won't crash the server
 
-            # _media_type = f"audio/{media_type}" if not (streaming_mode and media_type in ["wav", "raw"]) else f"audio/x-{media_type}"
+         # _media_type = f"audio/{media_type}" if not (streaming_mode and media_type in ["wav", "raw"]) else f"audio/x-{media_type}"
             return StreamingResponse(
                 streaming_generator(
                     tts_generator,
@@ -385,33 +422,33 @@ async def tts_get_endpoint(
     text: str = None,
     text_lang: str = None,
     ref_audio_path: str = None,
-    aux_ref_audio_paths: list = None,
+    aux_ref_audio_paths: list = [],
     prompt_lang: str = None,
-    prompt_text: str = "",
+    prompt_text: str = None,
     top_k: int = 5,
-    top_p: float = 1,
-    temperature: float = 1,
-    text_split_method: str = "cut0",
-    batch_size: int = 1,
+    top_p: float = 0.9,
+    temperature: float = 0.8,
+    text_split_method: str = "cut6",
+    batch_size: int = 2,
     batch_threshold: float = 0.75,
     split_bucket: bool = True,
     speed_factor: float = 1.0,
-    fragment_interval: float = 0.3,
+    fragment_interval: float = 0.2,
     seed: int = -1,
-    media_type: str = "wav",
+    media_type: str = "aac",
     streaming_mode: bool = False,
     parallel_infer: bool = True,
     repetition_penalty: float = 1.35,
-    sample_steps: int = 32,
+    sample_steps: int = 12,
     super_sampling: bool = False,
 ):
     req = {
         "text": text,
-        "text_lang": text_lang.lower(),
+        "text_lang": text_lang,
         "ref_audio_path": ref_audio_path,
         "aux_ref_audio_paths": aux_ref_audio_paths,
         "prompt_text": prompt_text,
-        "prompt_lang": prompt_lang.lower(),
+        "prompt_lang": prompt_lang,
         "top_k": top_k,
         "top_p": top_p,
         "temperature": temperature,

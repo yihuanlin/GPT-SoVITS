@@ -142,52 +142,6 @@ class DictToAttrRecursive(dict):
 class NO_PROMPT_ERROR(Exception):
     pass
 
-
-# configs/tts_infer.yaml
-"""
-custom:
-  bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
-  cnhuhbert_base_path: GPT_SoVITS/pretrained_models/chinese-hubert-base
-  device: cpu
-  is_half: false
-  t2s_weights_path: GPT_SoVITS/pretrained_models/gsv-v2final-pretrained/s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt
-  vits_weights_path: GPT_SoVITS/pretrained_models/gsv-v2final-pretrained/s2G2333k.pth
-  version: v2
-v1:
-  bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
-  cnhuhbert_base_path: GPT_SoVITS/pretrained_models/chinese-hubert-base
-  device: cpu
-  is_half: false
-  t2s_weights_path: GPT_SoVITS/pretrained_models/s1bert25hz-2kh-longer-epoch=68e-step=50232.ckpt
-  vits_weights_path: GPT_SoVITS/pretrained_models/s2G488k.pth
-  version: v1
-v2:
-  bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
-  cnhuhbert_base_path: GPT_SoVITS/pretrained_models/chinese-hubert-base
-  device: cpu
-  is_half: false
-  t2s_weights_path: GPT_SoVITS/pretrained_models/gsv-v2final-pretrained/s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt
-  vits_weights_path: GPT_SoVITS/pretrained_models/gsv-v2final-pretrained/s2G2333k.pth
-  version: v2
-v3:
-  bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
-  cnhuhbert_base_path: GPT_SoVITS/pretrained_models/chinese-hubert-base
-  device: cpu
-  is_half: false
-  t2s_weights_path: GPT_SoVITS/pretrained_models/s1v3.ckpt
-  vits_weights_path: GPT_SoVITS/pretrained_models/s2Gv3.pth
-  version: v3
-v4:
-  bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
-  cnhuhbert_base_path: GPT_SoVITS/pretrained_models/chinese-hubert-base
-  device: cpu
-  is_half: false
-  t2s_weights_path: GPT_SoVITS/pretrained_models/s1v3.ckpt
-  version: v4
-  vits_weights_path: GPT_SoVITS/pretrained_models/gsv-v4-pretrained/s2Gv4.pth
-"""
-
-
 def set_seed(seed: int):
     seed = int(seed)
     seed = seed if seed != -1 else random.randint(0, 2**32 - 1)
@@ -301,7 +255,9 @@ class TTS_Config:
             configs: dict = self._load_configs(self.configs_path)
 
         assert isinstance(configs, dict)
-        version = configs.get("version", "v2").lower()
+        version = "v2ProPlus"
+        if "custom" in configs and configs["custom"]["version"] in ["v1", "v2", "v3", "v4", "v2Pro", "v2ProPlus"]:
+            version = configs["custom"]["version"]
         assert version in ["v1", "v2", "v3", "v4", "v2Pro", "v2ProPlus"]
         self.default_configs[version] = configs.get(version, self.default_configs[version])
         self.configs: dict = configs.get("custom", deepcopy(self.default_configs[version]))
@@ -483,7 +439,8 @@ class TTS:
             self.init_sv_model()
         path_sovits = self.configs.default_configs[model_version]["vits_weights_path"]
 
-        if if_lora_v3 == True and os.path.exists(path_sovits) == False:
+        v3v4set={"v3", "v4"}
+        if model_version in v3v4set and os.path.exists(path_sovits) == False:
             info = path_sovits + i18n("SoVITS %s 底模缺失，无法加载相应 LoRA 权重" % model_version)
             raise FileExistsError(info)
 
@@ -498,9 +455,8 @@ class TTS:
         else:
             hps["model"]["version"] = "v2"
         version = hps["model"]["version"]
-        v3v4set={"v3", "v4"}
         if model_version not in v3v4set:
-            if "Pro"not in model_version:
+            if "Pro" not in model_version:
                 model_version = version
             else:
                 hps["model"]["version"] = model_version
@@ -544,7 +500,9 @@ class TTS:
 
         self.is_v2pro=model_version in {"v2Pro","v2ProPlus"}
 
-        if if_lora_v3 == False:
+        print(f"Loading VITS weights from {weights_path}, model_version: {model_version}, if_lora_v3: {if_lora_v3}")
+
+        if model_version not in v3v4set:
             print(
                 f"Loading VITS weights from {weights_path}. {vits_model.load_state_dict(dict_s2['weight'], strict=False)}"
             )
@@ -994,7 +952,7 @@ class TTS:
                     "parallel_infer": True,       # bool. whether to use parallel inference.
                     "repetition_penalty": 1.35    # float. repetition penalty for T2S model.
                     "sample_steps": 32,           # int. number of sampling steps for VITS model V3.
-                    "super_sampling": False,       # bool. whether to use super-sampling for audio when using VITS model V3.
+                    "super_sampling": False,      # bool. whether to use super-sampling for audio when using VITS model V3.
                 }
         returns:
             Tuple[int, np.ndarray]: sampling rate and audio data.
@@ -1420,7 +1378,7 @@ class TTS:
             ref_audio = ref_audio.mean(0).unsqueeze(0)
 
         # tgt_sr = self.vocoder_configs["sr"]
-        tgt_sr = 24000 if self.configs.version == "v3" else 32000
+        tgt_sr = 24000 if self.configs.version == "v3" else (48000 if self.configs.version == "v4" else 32000)
         if ref_sr != tgt_sr:
             ref_audio = resample(ref_audio, ref_sr, tgt_sr, self.configs.device)
 
@@ -1490,7 +1448,7 @@ class TTS:
             ref_audio = ref_audio.mean(0).unsqueeze(0)
 
         # tgt_sr = self.vocoder_configs["sr"]
-        tgt_sr = 24000 if self.configs.version == "v3" else 32000
+        tgt_sr = 24000 if self.configs.version == "v3" else (48000 if self.configs.version == "v4" else 32000)
         if ref_sr != tgt_sr:
             ref_audio = resample(ref_audio, ref_sr, tgt_sr, self.configs.device)
 

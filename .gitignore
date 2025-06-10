@@ -1,5 +1,9 @@
 .DS_Store
 .vscode
+ref
+raw
+request.sh
+GPT_SoVITS/text/*_userdic/
 __pycache__
 *.pyc
 env

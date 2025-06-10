@@ -69,7 +69,10 @@ def split_big_text(text, max_len=510):
 
 def split(todo_text):
     todo_text = todo_text.replace("……", "。").replace("——", "，")
-    if todo_text[-1] not in splits:
+    words = todo_text.split()
+    if len(words) >= 3 and all(word.isalpha() for word in words[-3:]):
+        todo_text += "."
+    elif todo_text[-1] not in splits:
         todo_text += "。"
     i_split_head = i_split_tail = 0
     len_text = len(todo_text)
@@ -183,6 +186,79 @@ def cut5(inp):
     opt = [item for item in mergeitems if not set(item).issubset(punds)]
     return "\n".join(opt)
 
+# 按行切，再按中文句号。！？切，再按英文句号.!?切，短句合并
+@register_method("cut6")
+def cut6(inp):
+    inp = inp.strip("\n")
+    lines = inp.split("\n")
+    final_segments = []
+    # Define punctuation set for filtering
+    punctuation_set = set("。！？.!?，,;；:：—…~、 ")
+    # Define punctuation for splitting long chunks
+    all_punctuation = "。！？.!?，,;；:：—…~、"
+
+    for line in lines:
+        if not line.strip():  # Skip empty lines
+            continue
+
+        # Split by Chinese and English end-of-sentence punctuation, keeping delimiters
+        parts = re.split(r'([。！？.!?])', line)
+
+        merged_parts = []
+        current_merge = ""
+
+        for i, part in enumerate(parts):
+            # Check if adding this part would make the chunk too long
+            potential_chunk = current_merge + part
+            
+            # Count non-alphabetical characters
+            non_alpha_count = len(re.sub(r'[a-zA-Z0-9\s]', '', potential_chunk))
+            
+            # Count unique spaces (continuous spaces count as 1)
+            unique_space_count = len(re.findall(r'\S+', potential_chunk)) - 1 if potential_chunk.strip() else 0
+            
+            # Check if chunk would be too long
+            is_too_long = non_alpha_count > 20 or unique_space_count > 10
+            
+            if is_too_long and current_merge:
+                # Try to split at the nearest punctuation
+                found_split = False
+                for char in all_punctuation:
+                    last_punct_pos = current_merge.rfind(char)
+                    if last_punct_pos > 0:
+                        # Split at punctuation
+                        merged_parts.append(current_merge[:last_punct_pos+1])
+                        current_merge = current_merge[last_punct_pos+1:] + part
+                        found_split = True
+                        break
+                
+                # If no punctuation found, just add the current chunk
+                if not found_split:
+                    merged_parts.append(current_merge)
+                    current_merge = part
+            else:
+                current_merge = potential_chunk
+            
+            # Original length-based checks
+            is_long_enough = len(current_merge) >= 6 or current_merge.count(' ') >= 3
+            
+            # If it's long enough or it's the very last part
+            if is_long_enough and not is_too_long or i == len(parts) - 1:
+                # Filter out segments that are only punctuation
+                if not all(char in punctuation_set for char in current_merge.strip()):
+                    merged_parts.append(current_merge)
+                current_merge = ""  # Reset for the next segment
+
+        # Add any remaining part if not empty
+        if current_merge and not all(char in punctuation_set for char in current_merge.strip()):
+            merged_parts.append(current_merge)
+
+        final_segments.extend(merged_parts)
+
+    # Filter out any empty strings
+    final_segments = [seg for seg in final_segments if seg.strip()]
+
+    return "\n".join(final_segments)
 
 if __name__ == "__main__":
     method = get_method("cut5")

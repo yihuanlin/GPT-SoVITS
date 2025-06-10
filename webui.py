@@ -83,6 +83,8 @@ from config import (
     webui_port_subfix,
     webui_port_uvr5,
 )
+is_share = True
+
 from tools import my_utils
 from tools.my_utils import check_details, check_for_existance
 
