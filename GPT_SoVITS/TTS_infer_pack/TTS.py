@@ -264,14 +264,14 @@ class TTS_Config:
         self.default_configs = deepcopy(configs_)
 
         self.device = self.configs.get("device", torch.device("cpu"))
-        if "cuda" in str(self.device) and not torch.cuda.is_available():
-            print("Warning: CUDA is not available, set device to CPU.")
-            self.device = torch.device("cpu")
+        # if "cuda" in str(self.device) and not torch.cuda.is_available():
+        #     print("Warning: CUDA is not available, set device to CPU.")
+        #     self.device = torch.device("cpu")
 
         self.is_half = self.configs.get("is_half", False)
-        if str(self.device) == "cpu" and self.is_half:
-            print(f"Warning: Half precision is not supported on CPU, set is_half to False.")
-            self.is_half = False
+        # if str(self.device) == "cpu" and self.is_half:
+        #     print(f"Warning: Half precision is not supported on CPU, set is_half to False.")
+        #     self.is_half = False
 
         version = self.configs.get("version", None)
         self.version = version
