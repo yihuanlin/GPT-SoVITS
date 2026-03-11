@@ -125,6 +125,8 @@ from GPT_SoVITS.TTS_infer_pack.TTS import TTS, TTS_Config
 from GPT_SoVITS.TTS_infer_pack.text_segmentation_method import get_method_names as get_cut_method_names
 from pydantic import BaseModel
 import threading
+import re
+from fastapi.middleware.cors import CORSMiddleware
 
 # print(sys.path)
 i18n = I18nAuto()
