@@ -1,5 +1,6 @@
 .DS_Store
 .vscode
+token.txt
 ref
 raw
 request.sh

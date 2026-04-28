@@ -116,7 +116,7 @@ import wave
 import signal
 import numpy as np
 import soundfile as sf
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Response, HTTPException, Depends, status
 from fastapi.responses import StreamingResponse, JSONResponse
 import uvicorn
 from io import BytesIO
@@ -127,14 +127,30 @@ from pydantic import BaseModel
 import threading
 import re
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer
 
 # print(sys.path)
 i18n = I18nAuto()
 cut_method_names = get_cut_method_names()
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+def get_secret_from_file(filename="token.txt"):
+    if not os.path.exists(filename):
+        return None
+    with open(filename, "r") as f:
+        return f.read().strip()
+
+def validate_token(token: str = Depends(oauth2_scheme)):
+    if token != EXPECTED_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized",
+        )
+    return token
+EXPECTED_TOKEN = get_secret_from_file()
 
 parser = argparse.ArgumentParser(description="GPT-SoVITS api")
 parser.add_argument("-c", "--tts_config", type=str, default="GPT_SoVITS/configs/tts_infer.yaml", help="tts_infer路径")
-parser.add_argument("-a", "--bind_addr", type=str, default="127.0.0.1", help="default: 127.0.0.1")
+parser.add_argument("-a", "--bind_addr", type=str, default="", help="default: all")
 parser.add_argument("-p", "--port", type=int, default="9880", help="default: 9880")
 args = parser.parse_args()
 config_path = args.tts_config
@@ -583,7 +599,7 @@ async def tts_handle(req: dict):
 
 
 @APP.get("/control")
-async def control(command: str = None):
+async def control(command: str = None, token: str = Depends(validate_token)):
     if command is None:
         return JSONResponse(status_code=400, content={"message": "command is required"})
     handle_control(command)
@@ -615,6 +631,7 @@ async def tts_get_endpoint(
     streaming_mode: Union[bool, int] = False,
     overlap_length: int = 2,
     min_chunk_length: int = 16,
+    token: str = Depends(validate_token)
 ):
     req = {
         "text": text,
@@ -646,13 +663,13 @@ async def tts_get_endpoint(
 
 
 @APP.post("/tts")
-async def tts_post_endpoint(request: TTS_Request):
+async def tts_post_endpoint(request: TTS_Request, token: str = Depends(validate_token)):
     req = request.dict()
     return await tts_handle(req)
 
 
 @APP.get("/set_refer_audio")
-async def set_refer_aduio(refer_audio_path: str = None):
+async def set_refer_aduio(refer_audio_path: str = None, token: str = Depends(validate_token)):
     try:
         tts_pipeline.set_ref_audio(refer_audio_path)
     except Exception as e:
@@ -680,7 +697,7 @@ async def set_refer_aduio(refer_audio_path: str = None):
 
 
 @APP.get("/set_gpt_weights")
-async def set_gpt_weights(weights_path: str = None):
+async def set_gpt_weights(weights_path: str = None, token: str = Depends(validate_token)):
     try:
         if weights_path in ["", None]:
             return JSONResponse(status_code=400, content={"message": "gpt weight path is required"})
@@ -692,7 +709,7 @@ async def set_gpt_weights(weights_path: str = None):
 
 
 @APP.get("/set_sovits_weights")
-async def set_sovits_weights(weights_path: str = None):
+async def set_sovits_weights(weights_path: str = None, token: str = Depends(validate_token)):
     try:
         if weights_path in ["", None]:
             return JSONResponse(status_code=400, content={"message": "sovits weight path is required"})
