@@ -104,7 +104,7 @@ RESP:
 import os
 import sys
 import traceback
-from typing import Generator, Union
+from typing import Generator, Union, Optional
 
 now_dir = os.getcwd()
 sys.path.append(now_dir)
@@ -116,7 +116,7 @@ import wave
 import signal
 import numpy as np
 import soundfile as sf
-from fastapi import FastAPI, Response, HTTPException, Depends, status
+from fastapi import FastAPI, Response, Query, HTTPException, Depends, status
 from fastapi.responses import StreamingResponse, JSONResponse
 import uvicorn
 from io import BytesIO
@@ -132,14 +132,15 @@ from fastapi.security import OAuth2PasswordBearer
 # print(sys.path)
 i18n = I18nAuto()
 cut_method_names = get_cut_method_names()
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 def get_secret_from_file(filename="token.txt"):
     if not os.path.exists(filename):
         return None
     with open(filename, "r") as f:
         return f.read().strip()
 
-def validate_token(token: str = Depends(oauth2_scheme)):
+def validate_token(header_token: str = Depends(oauth2_scheme), query_token: Optional[str] = Query(None, alias="token")):
+    token = header_token or query_token
     if token != EXPECTED_TOKEN:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
