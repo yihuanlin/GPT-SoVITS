@@ -226,8 +226,8 @@ def init_bigvgan():
 
     bigvgan_model = bigvgan.BigVGAN.from_pretrained(
         "%s/GPT_SoVITS/pretrained_models/models--nvidia--bigvgan_v2_24khz_100band_256x" % (now_dir,),
-        use_cuda_kernel=False,
     )
+    # remove weight norm in the model and set to eval mode
     bigvgan_model.remove_weight_norm()
     bigvgan_model = bigvgan_model.eval()
 
